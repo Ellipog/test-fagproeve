@@ -1,103 +1,226 @@
-import Image from "next/image";
+"use client";
+
+import { useState, useCallback } from "react";
+import FileUploader from "./components/FileUploader";
+import AnalysisFields from "./components/AnalysisFields";
+import Results from "./components/Results";
+import { AnalysisField, defaultAnalysisFields } from "./config/analysisFields";
+import { uploadFile, analyzeFile, createCsvContent } from "./api/analyzeFile";
 
 export default function Home() {
-  return (
-    <div className="grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20 font-[family-name:var(--font-geist-sans)]">
-      <main className="flex flex-col gap-[32px] row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="list-inside list-decimal text-sm/6 text-center sm:text-left font-[family-name:var(--font-geist-mono)]">
-          <li className="mb-2 tracking-[-.01em]">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] px-1 py-0.5 rounded font-[family-name:var(--font-geist-mono)] font-semibold">
-              app/page.tsx
-            </code>
-            .
-          </li>
-          <li className="tracking-[-.01em]">
-            Save and see your changes instantly.
-          </li>
-        </ol>
+  const [isUploading, setIsUploading] = useState(false);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [analysisFields, setAnalysisFields] = useState<AnalysisField[]>(defaultAnalysisFields);
+  const [results, setResults] = useState<any | null>(null);
+  const [csvContent, setCsvContent] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:w-auto"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 w-full sm:w-auto md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
+  const handleFileSelected = useCallback(async (file: File) => {
+    console.log("🔵 File selected:", file.name);
+    console.log("🔵 File type:", file.type);
+    console.log("🔵 File size:", file.size, "bytes");
+    
+    setSelectedFile(file);
+    setResults(null);
+    setCsvContent(null);
+    setError(null);
+  }, []);
+
+  const handleAnalyze = useCallback(async () => {
+    if (!selectedFile) {
+      setError("Ingen fil valgt for analyse");
+      return;
+    }
+
+    console.log("🟢 Starting analysis for file:", selectedFile.name);
+    setIsUploading(true);
+    setError(null);
+
+    try {
+      // Read the file content - using text for simple files, base64 for binary
+      console.log("🟢 Reading file content...");
+      let fileContent;
+      
+      // For PDF and image files, read as base64
+      if (selectedFile.type.includes('pdf') || 
+          selectedFile.type.includes('image') || 
+          selectedFile.type.includes('application/octet-stream')) {
+        fileContent = await readFileAsBase64(selectedFile);
+        console.log("🟢 File read as base64 data URL");
+      } else {
+        // For text files, read as text
+        fileContent = await readFileAsText(selectedFile);
+        console.log("🟢 File read as text");
+      }
+      
+      console.log("🟢 File content read successfully, length:", fileContent.length, "characters");
+      if (typeof fileContent === 'string' && fileContent.length > 100) {
+        console.log("🟢 First 100 characters:", fileContent.substring(0, 100));
+      }
+      
+      // For simplicity, assuming a single page for most files
+      // In a real application, you'd need to determine actual page count
+      const numPages = 1;
+      console.log("🟢 Using page count:", numPages);
+      
+      // First try to upload the file
+      console.log("🟢 Uploading file to API...");
+      const uploadResult = await uploadFile(selectedFile);
+      console.log("🟢 Upload result:", uploadResult);
+      
+      // Then analyze the content
+      console.log("🟢 Analyzing file content with fields:", analysisFields.map(f => f.name).join(", "));
+      const analysisResults = await analyzeFile(fileContent, numPages, analysisFields);
+      console.log("🟢 Analysis results:", JSON.stringify(analysisResults, null, 2));
+      setResults(analysisResults);
+      
+      // If we have results, also generate CSV content
+      if (analysisResults) {
+        console.log("🟢 Generating CSV content...");
+        const csvData = await createCsvContent(analysisResults);
+        console.log("🟢 CSV content generated:", typeof csvData === 'string' && csvData.length > 100 ? 
+          csvData.substring(0, 100) + "..." : csvData);
+        setCsvContent(csvData);
+      }
+    } catch (err) {
+      console.error("🔴 Error during analysis:", err);
+      setError(`Feil under analyse av filen: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      console.log("🟢 Analysis process completed");
+      setIsUploading(false);
+    }
+  }, [selectedFile, analysisFields]);
+
+  // Helper function to read file content as text
+  const readFileAsText = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      console.log("🟡 Starting to read file as text:", file.name);
+      const reader = new FileReader();
+      
+      reader.onload = () => {
+        console.log("🟡 File read completed successfully");
+        const content = reader.result as string;
+        console.log("🟡 File content length:", content.length);
+        resolve(content);
+      };
+      
+      reader.onerror = () => {
+        console.error("🔴 Error reading file:", reader.error);
+        reject(reader.error);
+      };
+      
+      reader.onprogress = (event) => {
+        if (event.lengthComputable) {
+          const percentComplete = Math.round((event.loaded / event.total) * 100);
+          console.log(`🟡 Reading progress: ${percentComplete}%`);
+        }
+      };
+      
+      console.log("🟡 Starting file read operation...");
+      reader.readAsText(file);
+    });
+  };
+
+  // Helper function to read file as base64 data URL
+  const readFileAsBase64 = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      console.log("🟡 Starting to read file as base64:", file.name);
+      const reader = new FileReader();
+      
+      reader.onload = () => {
+        console.log("🟡 File read as base64 completed successfully");
+        const content = reader.result as string;
+        console.log("🟡 Base64 content length:", content.length);
+        resolve(content);
+      };
+      
+      reader.onerror = () => {
+        console.error("🔴 Error reading file as base64:", reader.error);
+        reject(reader.error);
+      };
+      
+      reader.onprogress = (event) => {
+        if (event.lengthComputable) {
+          const percentComplete = Math.round((event.loaded / event.total) * 100);
+          console.log(`🟡 Reading progress: ${percentComplete}%`);
+        }
+      };
+      
+      console.log("🟡 Starting file read as data URL...");
+      reader.readAsDataURL(file);
+    });
+  };
+
+  return (
+    <div className="min-h-screen bg-gray-50">
+      <div className="max-w-7xl mx-auto py-12 px-4 sm:px-6 lg:px-8">
+        <div className="text-center mb-12">
+          <h1 className="text-3xl font-extrabold text-gray-900 sm:text-4xl">
+            Databie
+          </h1>
+          <p className="mt-3 max-w-2xl mx-auto text-xl text-gray-500 sm:mt-4">
+            Trekk ut strukturert data fra PDFer, bilder og andre ustrukturerte dokumenter
+          </p>
         </div>
-      </main>
-      <footer className="row-start-3 flex gap-[24px] flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
+
+        <div className="mt-10 space-y-10">
+          <div className="bg-white overflow-hidden shadow rounded-lg">
+            <div className="px-4 py-5 sm:p-6">
+              <h2 className="text-lg font-medium text-gray-900 mb-4">Last opp fil</h2>
+              <div className="mb-5">
+                <FileUploader onFileSelected={handleFileSelected} isUploading={isUploading} />
+              </div>
+              {selectedFile && (
+                <div className="mt-2 text-sm text-gray-500">
+                  Valgt fil: {selectedFile.name} ({Math.round(selectedFile.size / 1024)} KB)
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="bg-white overflow-hidden shadow rounded-lg">
+            <div className="px-4 py-5 sm:p-6">
+              <AnalysisFields fields={analysisFields} onChange={setAnalysisFields} />
+            </div>
+          </div>
+
+          <div className="flex justify-center">
+            <button
+              type="button"
+              onClick={handleAnalyze}
+              disabled={isUploading || !selectedFile}
+              className={`px-6 py-3 border border-transparent text-base font-medium rounded-md shadow-sm text-white ${
+                isUploading || !selectedFile
+                  ? "bg-gray-400 cursor-not-allowed"
+                  : "bg-blue-600 hover:bg-blue-700"
+              }`}
+            >
+              {isUploading ? "Analyserer..." : "Bzzzz... Trekk ut data!"}
+            </button>
+          </div>
+
+          {error && (
+            <div className="rounded-md bg-red-50 p-4">
+              <div className="flex">
+                <div className="flex-shrink-0">
+                  <svg className="h-5 w-5 text-red-400" fill="currentColor" viewBox="0 0 20 20">
+                    <path
+                      fillRule="evenodd"
+                      d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z"
+                      clipRule="evenodd"
+                    />
+                  </svg>
+                </div>
+                <div className="ml-3">
+                  <p className="text-sm text-red-700">{error}</p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {results && <Results results={results} csvContent={csvContent} />}
+        </div>
+      </div>
     </div>
   );
 }
